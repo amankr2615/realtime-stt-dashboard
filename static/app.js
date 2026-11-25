@@ -2,7 +2,9 @@
 
 let audioContext = null;
 let mediaStream = null;
+let micSource = null;
 let workletNode = null;
+let muteNode = null;
 let websocket = null;
 let isRecording = false;
 
@@ -138,6 +140,7 @@ async function startAudioCapture() {
         //    converts device rate (usually 44.1kHz or 48kHz) to 16kHz internally.
         //    This is MUCH higher quality than manual resampling in the worklet.
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        await audioContext.resume();
 
         // Request mono mic with browser-level noise suppression and echo cancellation.
         // Do NOT force sampleRate in getUserMedia constraints — let the browser pick
@@ -153,8 +156,10 @@ async function startAudioCapture() {
         });
 
         await audioContext.audioWorklet.addModule("/static/audio-processor.js");
-        const micSource = audioContext.createMediaStreamSource(mediaStream);
+        micSource = audioContext.createMediaStreamSource(mediaStream);
         workletNode = new AudioWorkletNode(audioContext, "pcm16-processor");
+        muteNode = audioContext.createGain();
+        muteNode.gain.value = 0;
 
         workletNode.port.onmessage = (event) => {
             if (websocket && websocket.readyState === WebSocket.OPEN) {
@@ -163,7 +168,8 @@ async function startAudioCapture() {
         };
 
         micSource.connect(workletNode);
-        // Do NOT connect workletNode to speakers — that would create a feedback loop
+        workletNode.connect(muteNode);
+        muteNode.connect(audioContext.destination);
 
         // Update UI
         isRecording = true;
@@ -193,6 +199,22 @@ function stopAudioCapture() {
         setTimeout(() => {
             if (wsRef && wsRef.readyState === WebSocket.OPEN) wsRef.close();
         }, 5000);
+    }
+
+    if (workletNode) {
+        workletNode.port.onmessage = null;
+        workletNode.disconnect();
+        workletNode = null;
+    }
+
+    if (muteNode) {
+        muteNode.disconnect();
+        muteNode = null;
+    }
+
+    if (micSource) {
+        micSource.disconnect();
+        micSource = null;
     }
 
     if (mediaStream) {
