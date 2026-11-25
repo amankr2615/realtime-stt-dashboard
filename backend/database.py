@@ -15,7 +15,7 @@ if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 
 try:
-    engine = create_engine(db_url, connect_args=connect_args)
+    engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
     # Test connection
     with engine.connect() as conn:
         logger.info("Database connection established: %s", db_url.split("@")[-1] if "@" in db_url else db_url)
@@ -23,7 +23,7 @@ except Exception as e:
     logger.warning("Failed to connect to %s: %s. Falling back to local SQLite.", db_url, e)
     db_url = "sqlite:///./transcriptions.db"
     connect_args = {"check_same_thread": False}
-    engine = create_engine(db_url, connect_args=connect_args)
+    engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

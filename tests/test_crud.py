@@ -106,3 +106,32 @@ def test_pagination(client):
     # Cleanup
     for cid in created_ids:
         client.delete(f"/api/transcriptions/{cid}", headers=headers)
+
+
+def test_reject_blank_transcription(client):
+    headers = {"X-Session-ID": "session-validation"}
+    # Empty or whitespace-only text on POST must fail validation (422)
+    assert client.post("/api/transcriptions", json={"text": ""}, headers=headers).status_code == 422
+    assert client.post("/api/transcriptions", json={"text": "   \n\t  "}, headers=headers).status_code == 422
+
+    # Valid create followed by whitespace-only PUT must fail validation (422)
+    created = client.post("/api/transcriptions", json={"text": "valid text"}, headers=headers)
+    assert created.status_code == 201
+    cid = created.json()["id"]
+    assert client.put(f"/api/transcriptions/{cid}", json={"text": "   "}, headers=headers).status_code == 422
+    client.delete(f"/api/transcriptions/{cid}", headers=headers)
+
+
+def test_health_endpoint_reports_configured_model(client):
+    from backend.config import settings
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["model"] == f"{settings.WHISPER_MODEL}-{settings.WHISPER_COMPUTE_TYPE}"
+
+
+def test_cors_no_wildcard_with_credentials(client):
+    resp = client.get("/api/health", headers={"Origin": "https://untrusted.example"})
+    assert resp.headers.get("access-control-allow-origin") != "*"
+    assert resp.headers.get("access-control-allow-credentials") != "true"

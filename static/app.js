@@ -36,6 +36,8 @@ const historyEmpty = document.getElementById("historyEmpty");
 const searchInput = document.getElementById("searchInput");
 const ttsAudioPlayer = document.getElementById("ttsAudioPlayer");
 const languageModeSelect = document.getElementById("languageModeSelect");
+const modelBadge = document.getElementById("modelBadge");
+const historyItemsById = new Map();
 
 // Edit Modal Elements
 const editModal = document.getElementById("editModal");
@@ -287,35 +289,39 @@ async function fetchHistory(query = "") {
 }
 
 function renderHistoryItems(items) {
+    historyItemsById.clear();
+    items.forEach(item => historyItemsById.set(Number(item.id), item));
+
     historyList.innerHTML = items.map(item => {
-        const date = new Date(item.created_at).toLocaleString();
+        const safeId = Number(item.id);
+        const date = escapeHtml(new Date(item.created_at).toLocaleString());
         const metrics = item.metrics || {};
-        const latencyBadge = metrics.p50_ms ? `${metrics.p50_ms}ms` : (metrics.inference_ms ? `${metrics.inference_ms}ms` : "");
-        const switchesBadge = metrics.switches !== undefined ? `${metrics.switches} switches` : "";
+        const latencyBadge = metrics.p50_ms ? `${Number(metrics.p50_ms)}ms` : (metrics.inference_ms ? `${Number(metrics.inference_ms)}ms` : "");
+        const switchesBadge = metrics.switches !== undefined ? `${Number(metrics.switches)} switches` : "";
 
         return `
-            <div class="p-4 sm:p-5 hover:bg-gray-50 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" id="item-${item.id}">
+            <div class="p-4 sm:p-5 hover:bg-gray-50 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" id="item-${safeId}">
                 <div class="space-y-1.5 flex-1 min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
                         <h4 class="text-sm font-semibold text-gray-900">${escapeHtml(item.title)}</h4>
-                        <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">${item.language}</span>
-                        ${latencyBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-gray-100 text-gray-700 border border-gray-200">${latencyBadge}</span>` : ""}
-                        ${switchesBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-amber-50 text-amber-700 border border-amber-200">${switchesBadge}</span>` : ""}
+                        <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">${escapeHtml(item.language)}</span>
+                        ${latencyBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-gray-100 text-gray-700 border border-gray-200">${escapeHtml(latencyBadge)}</span>` : ""}
+                        ${switchesBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-amber-50 text-amber-700 border border-amber-200">${escapeHtml(switchesBadge)}</span>` : ""}
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed break-words">${escapeHtml(item.text)}</p>
                     <div class="text-[11px] text-gray-400 font-mono">${date}</div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
-                    <button onclick="playTTS(${item.id}, ${JSON.stringify(item.text).replace(/"/g, '&quot;')})" 
+                    <button type="button" data-action="tts" data-id="${safeId}"
                         class="min-h-[36px] px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium transition-colors" title="Listen (TTS)">
                         🔊 Listen
                     </button>
-                    <button onclick="openEditModal(${item.id}, ${JSON.stringify(item.title).replace(/"/g, '&quot;')}, ${JSON.stringify(item.text).replace(/"/g, '&quot;')})" 
+                    <button type="button" data-action="edit" data-id="${safeId}"
                         class="min-h-[36px] px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium transition-colors" title="Edit">
                         ✏️ Edit
                     </button>
-                    <button onclick="deleteItem(${item.id})" 
+                    <button type="button" data-action="delete" data-id="${safeId}"
                         class="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium border border-rose-200 transition-colors" title="Delete">
                         🗑️ Delete
                     </button>
@@ -324,6 +330,23 @@ function renderHistoryItems(items) {
         `;
     }).join("");
 }
+
+historyList.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const id = Number(btn.dataset.id);
+    const item = historyItemsById.get(id);
+    if (!item) return;
+
+    const action = btn.dataset.action;
+    if (action === "tts") {
+        playTTS(id, item.text);
+    } else if (action === "edit") {
+        openEditModal(id, item.title, item.text);
+    } else if (action === "delete") {
+        deleteItem(id);
+    }
+});
 
 // Save Current Canvas to Database
 saveTranscriptionBtn.addEventListener("click", async () => {
@@ -501,8 +524,27 @@ speakCurrentBtn.addEventListener("click", () => {
 
 // Utility
 function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    if (str === null || str === undefined) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+async function loadModelBadge() {
+    if (!modelBadge) return;
+    try {
+        const res = await fetch("/api/health");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.model) {
+            modelBadge.textContent = `faster-whisper (${data.model})`;
+        }
+    } catch (_) {
+        // Keep default badge text if health check fails
+    }
 }
 
 if (languageModeSelect) {
@@ -517,4 +559,5 @@ if (languageModeSelect) {
 }
 
 // Initial Load
+loadModelBadge();
 fetchHistory();
