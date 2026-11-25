@@ -141,7 +141,7 @@ async def websocket_transcribe(websocket: WebSocket):
     logger.info("WebSocket client connected.")
 
     audio_buffer = BoundedAudioBuffer(sample_rate=settings.SAMPLE_RATE, max_seconds=settings.MAX_BUFFER_SECONDS)
-    streaming_state = StreamingTranscriber(agreement_count=2)
+    streaming_state = StreamingTranscriber()
     whisper_engine = WhisperEngine.get_instance()
 
     is_running = True
@@ -149,13 +149,23 @@ async def websocket_transcribe(websocket: WebSocket):
     language_mode = "hi"  # Default: Hinglish with Devanagari Hindi + English loanwords
 
     async def inference_worker():
-        """Periodically runs inference on accumulated audio window without blocking WebSocket loop."""
+        """
+        Fires every INFERENCE_INTERVAL_SEC.
+        Skips inference when:
+          • Buffer is too short (< MIN_AUDIO_DURATION_SEC)
+          • Energy VAD reports silence (prevents hallucination on background noise)
+          • A previous inference pass is still running (backpressure guard)
+        """
         while is_running:
             await asyncio.sleep(settings.INFERENCE_INTERVAL_SEC)
-            
-            # Check if there is enough audio to transcribe
+
             current_sec = audio_buffer.duration_seconds()
             if current_sec < settings.MIN_AUDIO_DURATION_SEC:
+                continue
+
+            # ── Energy VAD gate ─────────────────────────────────────────────
+            if not audio_buffer.has_enough_speech():
+                logger.debug("VAD: silence detected, skipping inference pass")
                 continue
 
             if active_inference_lock.locked():
@@ -166,23 +176,23 @@ async def websocket_transcribe(websocket: WebSocket):
                 if len(audio_float) == 0:
                     continue
 
-                # Run Whisper inference outside the async event loop with language conditioning
                 hypothesis, infer_time = await asyncio.to_thread(
                     whisper_engine.transcribe,
                     audio_float,
-                    language_mode=language_mode
+                    language_mode=language_mode,
                 )
-                
-                # Apply local agreement with deduplication
+
+                if not hypothesis.strip():
+                    continue
+
                 result = streaming_state.process_hypothesis(
                     hypothesis_text=hypothesis,
                     audio_duration_sec=current_sec,
-                    inference_time_sec=infer_time
+                    inference_time_sec=infer_time,
                 )
 
-                # Once words are committed, advance audio window by trimming processed audio from the front
+                # Advance audio window after confirmed words
                 if result["words_committed_count"] > 0:
-                    # Keep only the unconfirmed tail (last 1.0s) as acoustic context
                     trim_duration = max(0.0, current_sec - 1.0)
                     if trim_duration > 0.3:
                         audio_buffer.trim_front(trim_duration, keep_overlap_sec=0.2)
@@ -190,10 +200,10 @@ async def websocket_transcribe(websocket: WebSocket):
                 try:
                     await websocket.send_json({
                         "type": "partial",
-                        "committed": result["committed_text"],
+                        "committed":   result["committed_text"],
                         "provisional": result["provisional_text"],
-                        "full_text": result["full_text"],
-                        "metrics": result["metrics"]
+                        "full_text":   result["full_text"],
+                        "metrics":     result["metrics"],
                     })
                 except Exception:
                     break
@@ -204,25 +214,22 @@ async def websocket_transcribe(websocket: WebSocket):
         while True:
             message = await websocket.receive()
             if "bytes" in message and message["bytes"]:
-                # Binary frame: 16kHz PCM16 audio batch
                 audio_buffer.append(message["bytes"])
             elif "text" in message and message["text"]:
                 try:
-                    data = json.loads(message["text"])
+                    data   = json.loads(message["text"])
                     action = data.get("action")
                     if action == "finalize":
-                        # Finalize utterance cleanly
                         final_res = streaming_state.finalize()
                         await websocket.send_json({
                             "type": "final",
-                            "text": final_res["final_text"],
-                            "metrics": final_res["metrics"]
+                            "text":    final_res["final_text"],
+                            "metrics": final_res["metrics"],
                         })
                         audio_buffer.clear()
                     elif action == "set_language":
-                        new_lang = data.get("language", "hi")
-                        language_mode = new_lang
-                        logger.info("Language mode updated to: %s", language_mode)
+                        language_mode = data.get("language", "hi")
+                        logger.info("Language mode → %s", language_mode)
                     elif action == "reset":
                         audio_buffer.clear()
                 except json.JSONDecodeError:

@@ -14,7 +14,7 @@ def test_count_language_switches():
     assert count_language_switches(text) == 4
 
 def test_streaming_transcriber_agreement():
-    transcriber = StreamingTranscriber(agreement_count=2)
+    transcriber = StreamingTranscriber()
     
     # Pass 1: "main kal"
     res1 = transcriber.process_hypothesis("main kal", audio_duration_sec=1.0, inference_time_sec=0.1)
