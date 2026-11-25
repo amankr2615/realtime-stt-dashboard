@@ -132,6 +132,12 @@ class StreamingTranscriber:
         self.total_received_audio_sec: float = 0.0
         self.hallucination_count:   int = 0
 
+    def record_empty_inference(self, inference_time_sec: float, new_audio_sec: float) -> None:
+        """Accounts for inference passes that yield empty text in RTF and latency metrics."""
+        self.inference_latencies.append(inference_time_sec * 1000.0)
+        self.total_inference_sec += max(0.0, inference_time_sec)
+        self.total_received_audio_sec += max(0.0, new_audio_sec)
+
     def process_hypothesis(
         self,
         hypothesis_text: str,

@@ -239,6 +239,7 @@ async def websocket_transcribe(websocket: WebSocket):
                     )
 
                 if not hypothesis.strip():
+                    streaming_state.record_empty_inference(infer_time, new_audio_sec)
                     continue
 
                 result = streaming_state.process_hypothesis(
@@ -296,6 +297,8 @@ async def websocket_transcribe(websocket: WebSocket):
                                         streaming_state.process_hypothesis(
                                             hyp, rem_sec, infer_t, new_audio_sec=new_audio_sec
                                         )
+                                    else:
+                                        streaming_state.record_empty_inference(infer_t, new_audio_sec)
                         final_res = streaming_state.finalize()
                         await safe_send_json({
                             "type": "final",

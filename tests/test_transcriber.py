@@ -65,3 +65,13 @@ def test_latency_history_bounded():
     for i in range(12):
         transcriber.process_hypothesis(f"word{i}", audio_duration_sec=1.0, inference_time_sec=0.1)
     assert len(transcriber.inference_latencies) == 5
+
+
+def test_empty_inference_counted_in_rtf():
+    transcriber = StreamingTranscriber()
+    # Pass 1: empty hypothesis still consumes 0.5s inference for 1.0s new audio
+    transcriber.record_empty_inference(inference_time_sec=0.5, new_audio_sec=1.0)
+    # Pass 2: 0.5s inference for 1.0s new audio -> total 1.0s infer / 2.0s audio = 0.5 RTF
+    res = transcriber.process_hypothesis("hello", audio_duration_sec=2.0, inference_time_sec=0.5, new_audio_sec=1.0)
+    assert res["metrics"]["rtf"] == pytest.approx(0.5, abs=0.001)
+    assert len(transcriber.inference_latencies) == 2
