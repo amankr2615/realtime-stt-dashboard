@@ -1,100 +1,75 @@
 /**
- * PCM16Processor — AudioWorkletProcessor for real-time 16 kHz mono capture.
+ * PCM16Processor — High-quality 16 kHz PCM16 AudioWorkletProcessor
  *
- * Key improvements
- * ────────────────
- * 1. Downsamples from device sample rate → 16 000 Hz with linear interpolation.
- * 2. Applies a simple per-frame DC offset removal (mean subtraction) so that
- *    USB / built-in mic DC bias doesn't confuse Whisper's voice activity.
- * 3. Applies a soft-knee noise gate: frames below a configurable RMS threshold
- *    are zeroed out, so the server never receives pure-silence audio that would
- *    trigger hallucinations.
- * 4. Sends Int16 ArrayBuffers (transferable) for zero-copy WebSocket transfer.
+ * Strategy: Let the browser's AudioContext handle resampling natively.
+ * We create the AudioContext with sampleRate:16000 directly — on Chrome/Safari
+ * on macOS the browser resamples from the device rate (48kHz) using its own
+ * high-quality sinc filter BEFORE the samples reach this worklet.
+ * This eliminates all manual resampling artifacts.
+ *
+ * What this processor does:
+ * 1. Receives already-16kHz Float32 frames from the browser resampler
+ * 2. Applies DC offset removal per 128-sample frame
+ * 3. Applies a soft noise gate (zeros near-silence frames)
+ * 4. Packs samples into Int16 and sends 100ms batches over the port
  */
 class PCM16Processor extends AudioWorkletProcessor {
-    constructor(options) {
-        super(options);
-        this.targetSampleRate = 16000;
-        // 100 ms batch at 16 kHz = 1 600 samples → 3 200 bytes
-        this.batchSamples = 1600;
+    constructor() {
+        super();
+        // At 16kHz, 100ms = 1600 samples
+        this.BATCH_SAMPLES = 1600;
+        this.pcmBuffer     = new Int16Array(this.BATCH_SAMPLES);
+        this.writeIndex    = 0;
 
-        // ── Noise gate ────────────────────────────────────────────────────────
-        // RMS in float32 range [0, 1].  Values calibrated for a laptop mic at
-        // normal speaking distance.  ~0.004 cuts ambient hum / fan noise.
-        this.noiseGateThreshold = 0.004;
-
-        // Internal PCM accumulation buffer
-        this.pcmBuffer = new Int16Array(this.batchSamples);
-        this.pcmIndex  = 0;
+        // Noise gate: silence threshold in float32 RMS (0 to 1)
+        // 0.002 ≈ -54 dBFS — catches ambient hum, fan noise, electrical hiss
+        // Actual speech typically sits at 0.02–0.3 (−34 to −10 dBFS)
+        this.NOISE_GATE_RMS = 0.002;
     }
 
-    /**
-     * Remove DC offset from a Float32 frame (in-place).
-     * DC bias causes low-frequency energy that confuses VAD.
-     */
-    _removeDC(frame) {
-        let mean = 0;
-        for (let i = 0; i < frame.length; i++) mean += frame[i];
-        mean /= frame.length;
-        for (let i = 0; i < frame.length; i++) frame[i] -= mean;
-    }
-
-    /**
-     * Compute RMS energy of a Float32 frame.
-     */
-    _rms(frame) {
+    _rms(samples) {
         let sum = 0;
-        for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
-        return Math.sqrt(sum / frame.length);
+        for (let i = 0; i < samples.length; i++) {
+            sum += samples[i] * samples[i];
+        }
+        return Math.sqrt(sum / samples.length);
     }
 
-    /**
-     * Convert a single Float32 sample [-1, 1] → Int16.
-     */
-    _toInt16(sample) {
-        const clamped = Math.max(-1.0, Math.min(1.0, sample));
-        return Math.round(clamped < 0 ? clamped * 32768 : clamped * 32767);
+    _removeDC(samples) {
+        // Per-frame mean subtraction removes low-frequency DC bias from USB/built-in mics
+        let mean = 0;
+        for (let i = 0; i < samples.length; i++) mean += samples[i];
+        mean /= samples.length;
+        for (let i = 0; i < samples.length; i++) samples[i] -= mean;
     }
 
     process(inputs) {
-        const input = inputs[0];
-        if (!input || input.length === 0) return true;
+        const channel = inputs[0]?.[0];
+        if (!channel || channel.length === 0) return true;
 
-        // Use the first channel (mono).
-        const channelData = input[0];
-        if (!channelData || channelData.length === 0) return true;
+        // Work on a mutable copy
+        const frame = new Float32Array(channel);
 
-        // ── 1. DC removal on the raw 128-sample worklet frame ─────────────
-        const frame = new Float32Array(channelData);   // copy to avoid mutating input
+        // 1. Remove DC offset
         this._removeDC(frame);
 
-        // ── 2. Noise gate ─────────────────────────────────────────────────
-        const energy = this._rms(frame);
-        if (energy < this.noiseGateThreshold) {
-            // Advance internal buffer index with silence (zeros already)
-            // but DO NOT zero the entire batch — partial speech frames must
-            // still reach the server.  Just skip encoding this frame.
-            this.pcmIndex = Math.min(this.pcmIndex, this.batchSamples);
+        // 2. Noise gate — if this 128-sample frame is too quiet, skip it
+        //    This prevents sending silence to the server which triggers hallucinations
+        if (this._rms(frame) < this.NOISE_GATE_RMS) {
             return true;
         }
 
-        // ── 3. Resample: device rate → 16 kHz with linear interpolation ───
-        const ratio = sampleRate / this.targetSampleRate;   // e.g. 48000/16000 = 3.0
+        // 3. Convert each sample Float32 → Int16 and accumulate
+        for (let i = 0; i < frame.length; i++) {
+            const s = Math.max(-1.0, Math.min(1.0, frame[i]));
+            this.pcmBuffer[this.writeIndex++] = Math.round(s < 0 ? s * 32768 : s * 32767);
 
-        for (let i = 0; i < frame.length; i += ratio) {
-            const lo  = Math.floor(i);
-            const hi  = Math.min(lo + 1, frame.length - 1);
-            const frac = i - lo;
-            const sample = frame[lo] * (1 - frac) + frame[hi] * frac;  // lerp
-
-            this.pcmBuffer[this.pcmIndex++] = this._toInt16(sample);
-
-            // ── 4. Flush 100 ms batch ─────────────────────────────────────
-            if (this.pcmIndex >= this.batchSamples) {
+            // 4. Flush a complete 100ms batch
+            if (this.writeIndex >= this.BATCH_SAMPLES) {
                 const copy = new Int16Array(this.pcmBuffer);
                 this.port.postMessage(copy.buffer, [copy.buffer]);
-                this.pcmBuffer = new Int16Array(this.batchSamples);
-                this.pcmIndex  = 0;
+                this.pcmBuffer  = new Int16Array(this.BATCH_SAMPLES);
+                this.writeIndex = 0;
             }
         }
 

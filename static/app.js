@@ -112,15 +112,21 @@ async function startAudioCapture() {
             updateConnectionStatus("disconnected");
         };
 
-        // 2. Setup AudioContext & AudioWorklet
+        // 2. Setup AudioContext at 16kHz — the browser's built-in sinc resampler
+        //    converts device rate (usually 44.1kHz or 48kHz) to 16kHz internally.
+        //    This is MUCH higher quality than manual resampling in the worklet.
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+        // Request mono mic with browser-level noise suppression and echo cancellation.
+        // Do NOT force sampleRate in getUserMedia constraints — let the browser pick
+        // the best native device rate and resample via AudioContext.sampleRate.
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
-                sampleRate: 16000,
                 channelCount: 1,
                 echoCancellation: true,
                 noiseSuppression: true,
-                autoGainControl: true
+                autoGainControl: true,
+                // Do NOT set sampleRate here — forces device into a mode it may not support
             }
         });
 
@@ -130,13 +136,12 @@ async function startAudioCapture() {
 
         workletNode.port.onmessage = (event) => {
             if (websocket && websocket.readyState === WebSocket.OPEN) {
-                // Send raw PCM16 bytes directly to WebSocket
                 websocket.send(event.data);
             }
         };
 
         micSource.connect(workletNode);
-        // Note: Do NOT connect workletNode to destination to prevent mic feedback loop
+        // Do NOT connect workletNode to speakers — that would create a feedback loop
 
         // Update UI
         isRecording = true;
@@ -393,34 +398,47 @@ searchInput.addEventListener("input", (e) => {
 
 // -------------------------------------------------------------
 // Text-to-Speech (TTS)
+// Primary: Browser Web Speech API (zero latency, works offline, supports hi-IN)
+// Fallback: Backend edge-tts endpoint (requires network)
 // -------------------------------------------------------------
+
+function speakWithBrowser(text) {
+    if (!('speechSynthesis' in window)) return false;
+    window.speechSynthesis.cancel(); // stop any ongoing speech
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "hi-IN";
+    utterance.rate = 0.9;
+    utterance.pitch = 1.0;
+
+    // Prefer a Hindi voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const hindiVoice = voices.find(v => v.lang === "hi-IN" || v.lang.startsWith("hi"));
+    if (hindiVoice) utterance.voice = hindiVoice;
+
+    window.speechSynthesis.speak(utterance);
+    return true;
+}
 
 window.playTTS = async function(id, text) {
     if (!text.trim()) return;
+    // Always try browser-native first — it's instant and works offline
+    if (speakWithBrowser(text)) return;
 
+    // Fallback: backend edge-tts (requires internet)
     try {
         const res = await fetch("/api/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text })
         });
-
-        if (!res.ok) throw new Error("Backend TTS generation failed");
-
+        if (!res.ok) throw new Error("Backend TTS failed");
         const blob = await res.blob();
         const audioUrl = URL.createObjectURL(blob);
         ttsAudioPlayer.src = audioUrl;
         ttsAudioPlayer.play();
     } catch (err) {
-        console.warn("Backend TTS failed, falling back to Web Speech API:", err);
-        // Fallback to browser Web Speech API
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = "hi-IN";
-            window.speechSynthesis.speak(utterance);
-        } else {
-            alert("Text-to-Speech playback failed.");
-        }
+        console.warn("TTS unavailable:", err);
     }
 };
 
