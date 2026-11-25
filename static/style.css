@@ -1,0 +1,39 @@
+/* Custom typography & scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* Smooth fade for provisional text */
+#provisionalText {
+    transition: opacity 0.15s ease-in-out;
+}
+
+/* Audio wave pulse animation for recording */
+@keyframes mic-pulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    }
+    50% {
+        transform: scale(1.03);
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+}
+
+.recording-pulse {
+    animation: mic-pulse 1.8s infinite;
+}
