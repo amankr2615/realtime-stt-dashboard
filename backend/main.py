@@ -220,6 +220,19 @@ async def websocket_transcribe(websocket: WebSocket):
                     data   = json.loads(message["text"])
                     action = data.get("action")
                     if action == "finalize":
+                        # Transcribe any remaining audio in the buffer before finalizing
+                        rem_sec = audio_buffer.duration_seconds()
+                        if rem_sec >= 0.3 and audio_buffer.has_enough_speech():
+                            async with active_inference_lock:
+                                audio_float = audio_buffer.get_audio_float32()
+                                if len(audio_float) > 0:
+                                    hyp, infer_t = await asyncio.to_thread(
+                                        whisper_engine.transcribe,
+                                        audio_float,
+                                        language_mode=language_mode,
+                                    )
+                                    if hyp.strip():
+                                        streaming_state.process_hypothesis(hyp, rem_sec, infer_t)
                         final_res = streaming_state.finalize()
                         await websocket.send_json({
                             "type": "final",

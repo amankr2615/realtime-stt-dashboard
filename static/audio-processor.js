@@ -22,9 +22,8 @@ class PCM16Processor extends AudioWorkletProcessor {
         this.writeIndex    = 0;
 
         // Noise gate: silence threshold in float32 RMS (0 to 1)
-        // 0.002 ≈ -54 dBFS — catches ambient hum, fan noise, electrical hiss
-        // Actual speech typically sits at 0.02–0.3 (−34 to −10 dBFS)
-        this.NOISE_GATE_RMS = 0.002;
+        // 0.0008 cuts dead digital silence while allowing quiet smartphone/laptop voices
+        this.NOISE_GATE_RMS = 0.0008;
     }
 
     _rms(samples) {

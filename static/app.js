@@ -100,6 +100,13 @@ async function startAudioCapture() {
             } else if (data.type === "final") {
                 committedTextEl.textContent = data.text ? data.text + " " : "";
                 provisionalTextEl.textContent = "";
+                if (data.metrics) {
+                    if (data.metrics.p50_ms) metricLatencyEl.textContent = `${data.metrics.p50_ms} ms`;
+                    if (data.metrics.switches !== undefined) metricSwitchesEl.textContent = data.metrics.switches;
+                }
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.close();
+                }
             }
         };
 
@@ -164,12 +171,13 @@ async function startAudioCapture() {
 function stopAudioCapture() {
     isRecording = false;
 
-    // Send finalize action to WebSocket
+    // Send finalize action to WebSocket and wait for server's "final" response (up to 5s fallback)
     if (websocket && websocket.readyState === WebSocket.OPEN) {
         websocket.send(JSON.stringify({ action: "finalize" }));
+        const wsRef = websocket;
         setTimeout(() => {
-            if (websocket) websocket.close();
-        }, 300);
+            if (wsRef && wsRef.readyState === WebSocket.OPEN) wsRef.close();
+        }, 5000);
     }
 
     if (mediaStream) {
