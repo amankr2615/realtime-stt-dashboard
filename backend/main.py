@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import List, Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +32,41 @@ def get_session_id(x_session_id: Optional[str] = Header(default="default", alias
     """Extracts and normalizes anonymous client session ownership ID."""
     cleaned = (x_session_id or "default").strip()
     return cleaned[:64] if cleaned else "default"
+
+
+def is_allowed_ws_origin(origin: Optional[str], host_header: Optional[str]) -> bool:
+    """
+    Validates WebSocket Origin header against same-origin Host, RENDER_EXTERNAL_URL,
+    ALLOWED_ORIGINS, and local development origins.
+    Non-browser clients that omit Origin are permitted.
+    """
+    if not origin or not origin.strip():
+        return True
+
+    normalized_origin = origin.strip().rstrip("/").lower()
+    parsed = urlparse(normalized_origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+
+    # 1. Same-origin match against request Host header
+    if host_header and parsed.netloc == host_header.strip().lower():
+        return True
+
+    # 2. Local development origins
+    if parsed.scheme == "http" and (parsed.hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    # 3. Configured production / Render origin(s)
+    configured = []
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    if render_url:
+        configured.append(render_url.rstrip("/").lower())
+    extra_origins = os.getenv("ALLOWED_ORIGINS", "")
+    for item in extra_origins.split(","):
+        if item.strip():
+            configured.append(item.strip().rstrip("/").lower())
+
+    return normalized_origin in configured
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -184,6 +221,13 @@ async def generate_tts(payload: TTSRequest):
 
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
+    origin = websocket.headers.get("origin")
+    host = websocket.headers.get("host")
+    if not is_allowed_ws_origin(origin, host):
+        logger.warning("Rejected WebSocket connection from untrusted origin: %s", origin)
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     logger.info("WebSocket client connected.")
 
