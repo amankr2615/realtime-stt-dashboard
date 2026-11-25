@@ -33,6 +33,7 @@ const historyLoading = document.getElementById("historyLoading");
 const historyEmpty = document.getElementById("historyEmpty");
 const searchInput = document.getElementById("searchInput");
 const ttsAudioPlayer = document.getElementById("ttsAudioPlayer");
+const languageModeSelect = document.getElementById("languageModeSelect");
 
 // Edit Modal Elements
 const editModal = document.getElementById("editModal");
@@ -74,6 +75,13 @@ async function startAudioCapture() {
 
         websocket.onopen = () => {
             updateConnectionStatus("connected");
+            // Sync selected language mode with backend
+            if (languageModeSelect) {
+                websocket.send(JSON.stringify({
+                    action: "set_language",
+                    language: languageModeSelect.value
+                }));
+            }
         };
 
         websocket.onmessage = (event) => {
@@ -429,6 +437,17 @@ speakCurrentBtn.addEventListener("click", () => {
 function escapeHtml(str) {
     if (!str) return "";
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+if (languageModeSelect) {
+    languageModeSelect.addEventListener("change", (e) => {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({
+                action: "set_language",
+                language: e.target.value
+            }));
+        }
+    });
 }
 
 // Initial Load

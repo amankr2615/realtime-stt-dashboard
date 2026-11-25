@@ -146,6 +146,7 @@ async def websocket_transcribe(websocket: WebSocket):
 
     is_running = True
     active_inference_lock = asyncio.Lock()
+    language_mode = "hi"  # Default: Hinglish with Devanagari Hindi + English loanwords
 
     async def inference_worker():
         """Periodically runs inference on accumulated audio window without blocking WebSocket loop."""
@@ -165,21 +166,26 @@ async def websocket_transcribe(websocket: WebSocket):
                 if len(audio_float) == 0:
                     continue
 
-                # Run Whisper inference outside the async event loop
-                hypothesis, infer_time = await asyncio.to_thread(whisper_engine.transcribe, audio_float)
+                # Run Whisper inference outside the async event loop with language conditioning
+                hypothesis, infer_time = await asyncio.to_thread(
+                    whisper_engine.transcribe,
+                    audio_float,
+                    language_mode=language_mode
+                )
                 
-                # Apply local agreement
+                # Apply local agreement with deduplication
                 result = streaming_state.process_hypothesis(
                     hypothesis_text=hypothesis,
                     audio_duration_sec=current_sec,
                     inference_time_sec=infer_time
                 )
 
-                # If new words were confirmed, trim audio history to prevent repeat encoding
+                # Once words are committed, advance audio window by trimming processed audio from the front
                 if result["words_committed_count"] > 0:
-                    # Estimate audio duration of committed words (approx 0.35s per word)
-                    trim_duration = min(current_sec * 0.6, result["words_committed_count"] * 0.35)
-                    audio_buffer.trim_front(trim_duration, keep_overlap_sec=settings.CONFIRMATION_OVERLAP_SECONDS)
+                    # Keep only the unconfirmed tail (last 1.0s) as acoustic context
+                    trim_duration = max(0.0, current_sec - 1.0)
+                    if trim_duration > 0.3:
+                        audio_buffer.trim_front(trim_duration, keep_overlap_sec=0.2)
 
                 try:
                     await websocket.send_json({
@@ -205,7 +211,7 @@ async def websocket_transcribe(websocket: WebSocket):
                     data = json.loads(message["text"])
                     action = data.get("action")
                     if action == "finalize":
-                        # Finalize utterance
+                        # Finalize utterance cleanly
                         final_res = streaming_state.finalize()
                         await websocket.send_json({
                             "type": "final",
@@ -213,6 +219,10 @@ async def websocket_transcribe(websocket: WebSocket):
                             "metrics": final_res["metrics"]
                         })
                         audio_buffer.clear()
+                    elif action == "set_language":
+                        new_lang = data.get("language", "hi")
+                        language_mode = new_lang
+                        logger.info("Language mode updated to: %s", language_mode)
                     elif action == "reset":
                         audio_buffer.clear()
                 except json.JSONDecodeError:

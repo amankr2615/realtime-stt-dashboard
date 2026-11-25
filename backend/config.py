@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # Database: Defaults to SQLite for local development; override with Postgres in prod
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./transcriptions.db")
 
-    # Faster-Whisper Model Settings
-    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "tiny")
+    # Faster-Whisper Model Settings: 'base' provides high Hindi/Hinglish accuracy on CPU
+    WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
     WHISPER_CPU_THREADS: int = int(os.getenv("WHISPER_CPU_THREADS", "2"))
     WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")

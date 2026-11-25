@@ -13,7 +13,7 @@ services:
           name: hinglish-db
           property: connectionString
       - key: WHISPER_MODEL
-        value: tiny
+        value: base
       - key: WHISPER_COMPUTE_TYPE
         value: int8
       - key: WHISPER_CPU_THREADS
