@@ -50,14 +50,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware
+# Same-origin deployment; avoid wildcard '*' with allow_credentials=True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "X-Session-ID"],
 )
+
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "ok",
+        "model": f"{settings.WHISPER_MODEL}-{settings.WHISPER_COMPUTE_TYPE}",
+    }
 
 # -------------------------------------------------------------
 # REST API: CRUD Operations for Transcriptions
