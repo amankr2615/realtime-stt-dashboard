@@ -54,14 +54,14 @@ function getWebSocketUrl() {
 
 function updateConnectionStatus(status) {
     if (status === "connected") {
-        connectionBadge.className = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/60";
+        connectionBadge.className = "inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200";
         connectionBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>Live Connected`;
     } else if (status === "connecting") {
-        connectionBadge.className = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-950/80 text-amber-400 border border-amber-800/60";
+        connectionBadge.className = "inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200";
         connectionBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5"></span>Connecting...`;
     } else {
-        connectionBadge.className = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700";
-        connectionBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-slate-500 mr-1.5"></span>Disconnected`;
+        connectionBadge.className = "inline-flex items-center px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200";
+        connectionBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1.5"></span>Disconnected`;
     }
 }
 
@@ -145,7 +145,7 @@ async function startAudioCapture() {
 
         // Update UI
         isRecording = true;
-        toggleMicBtn.className = "flex items-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 recording-pulse";
+        toggleMicBtn.className = "min-h-[44px] flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 bg-rose-600 hover:bg-rose-700 text-white shadow-sm recording-pulse";
         micIcon.textContent = "⏹️";
         micBtnText.textContent = "Stop Recording";
         recordingIndicator.classList.remove("hidden");
@@ -183,7 +183,7 @@ function stopAudioCapture() {
     }
 
     // Reset UI
-    toggleMicBtn.className = "flex items-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 active:scale-95";
+    toggleMicBtn.className = "min-h-[44px] flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm active:scale-[0.98]";
     micIcon.textContent = "🎙️";
     micBtnText.textContent = "Start Recording";
     recordingIndicator.classList.add("hidden");
@@ -249,29 +249,29 @@ function renderHistoryItems(items) {
         const switchesBadge = metrics.switches !== undefined ? `${metrics.switches} switches` : "";
 
         return `
-            <div class="p-5 hover:bg-slate-800/40 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" id="item-${item.id}">
-                <div class="space-y-1.5 flex-1 pr-4">
-                    <div class="flex items-center space-x-2">
-                        <h4 class="text-sm font-semibold text-white">${escapeHtml(item.title)}</h4>
-                        <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-800/60">${item.language}</span>
-                        ${latencyBadge ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">${latencyBadge}</span>` : ""}
-                        ${switchesBadge ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-950/80 text-amber-300 border border-amber-800/50">${switchesBadge}</span>` : ""}
+            <div class="p-4 sm:p-5 hover:bg-gray-50 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" id="item-${item.id}">
+                <div class="space-y-1.5 flex-1 min-w-0">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <h4 class="text-sm font-semibold text-gray-900">${escapeHtml(item.title)}</h4>
+                        <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">${item.language}</span>
+                        ${latencyBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-gray-100 text-gray-700 border border-gray-200">${latencyBadge}</span>` : ""}
+                        ${switchesBadge ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-mono bg-amber-50 text-amber-700 border border-amber-200">${switchesBadge}</span>` : ""}
                     </div>
-                    <p class="text-sm text-slate-300 leading-relaxed">${escapeHtml(item.text)}</p>
-                    <div class="text-[11px] text-slate-500 font-mono">${date}</div>
+                    <p class="text-sm text-gray-700 leading-relaxed break-words">${escapeHtml(item.text)}</p>
+                    <div class="text-[11px] text-gray-400 font-mono">${date}</div>
                 </div>
 
-                <div class="flex items-center space-x-2 shrink-0">
+                <div class="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
                     <button onclick="playTTS(${item.id}, ${JSON.stringify(item.text).replace(/"/g, '&quot;')})" 
-                        class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors" title="Listen (TTS)">
+                        class="min-h-[36px] px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium transition-colors" title="Listen (TTS)">
                         🔊 Listen
                     </button>
                     <button onclick="openEditModal(${item.id}, ${JSON.stringify(item.title).replace(/"/g, '&quot;')}, ${JSON.stringify(item.text).replace(/"/g, '&quot;')})" 
-                        class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors" title="Edit">
+                        class="min-h-[36px] px-3 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium transition-colors" title="Edit">
                         ✏️ Edit
                     </button>
                     <button onclick="deleteItem(${item.id})" 
-                        class="p-2 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 text-xs border border-rose-800/40 transition-colors" title="Delete">
+                        class="min-h-[36px] px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium border border-rose-200 transition-colors" title="Delete">
                         🗑️ Delete
                     </button>
                 </div>
