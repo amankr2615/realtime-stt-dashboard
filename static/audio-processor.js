@@ -52,16 +52,19 @@ class PCM16Processor extends AudioWorkletProcessor {
         // 1. Remove DC offset
         this._removeDC(frame);
 
-        // 2. Noise gate — if this 128-sample frame is too quiet, skip it
-        //    This prevents sending silence to the server which triggers hallucinations
-        if (this._rms(frame) < this.NOISE_GATE_RMS) {
-            return true;
-        }
+        // 2. Noise gate — preserve the audio timeline by emitting zero-valued PCM
+        //    samples for quiet frames instead of dropping them. Server-side VAD
+        //    will skip inference on silence while inter-word pauses stay intact.
+        const isSilent = this._rms(frame) < this.NOISE_GATE_RMS;
 
-        // 3. Convert each sample Float32 → Int16 and accumulate
+        // 3. Convert each sample Float32 → Int16 (or 0 if gated) and accumulate
         for (let i = 0; i < frame.length; i++) {
-            const s = Math.max(-1.0, Math.min(1.0, frame[i]));
-            this.pcmBuffer[this.writeIndex++] = Math.round(s < 0 ? s * 32768 : s * 32767);
+            if (isSilent) {
+                this.pcmBuffer[this.writeIndex++] = 0;
+            } else {
+                const s = Math.max(-1.0, Math.min(1.0, frame[i]));
+                this.pcmBuffer[this.writeIndex++] = Math.round(s < 0 ? s * 32768 : s * 32767);
+            }
 
             // 4. Flush a complete 100ms batch
             if (this.writeIndex >= this.BATCH_SAMPLES) {

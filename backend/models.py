@@ -6,6 +6,7 @@ class Transcription(Base):
     __tablename__ = "transcriptions"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(String(64), nullable=False, index=True, default="default")
     title = Column(String(255), nullable=False, default="Untitled Transcription")
     text = Column(Text, nullable=False)
     language = Column(String(50), default="Hinglish")

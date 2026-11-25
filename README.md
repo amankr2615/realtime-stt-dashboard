@@ -1,32 +1,30 @@
 # Real-Time Hinglish Speech-to-Text Studio & Dashboard
 
-A production-grade, low-latency multilingual Speech-to-Text (STT) web service tailored for **Hinglish (Hindi + English)** code-switched speech. Features real-time audio streaming via WebSockets and AudioWorklet, local agreement stabilization with `faster-whisper`, PostgreSQL transcription persistence with full CRUD operations, and open-source Text-to-Speech (TTS).
+A lightweight, low-latency multilingual Speech-to-Text (STT) web application tailored for **Hinglish (Hindi + English)** code-switched speech. Built with FastAPI, WebSockets, `AudioWorklet`, `faster-whisper`, PostgreSQL/SQLite persistence with session-scoped CRUD, and Text-to-Speech (TTS).
 
 ---
 
 ## 🌟 Key Features
 
 1. **Real-Time Streaming STT (AudioWorklet + WebSocket):**
-   - High-performance `AudioWorklet` captures 16 kHz mono linear PCM16 directly on a dedicated Web Audio thread.
-   - Low-latency WebSocket transmission in 100 ms batches (3,200 bytes per frame).
-   - Zero browser audio encoding overhead.
+   - `AudioWorklet` captures 16 kHz mono linear PCM16 on the browser audio thread (preserving silent pauses as zero-valued PCM samples).
+   - Streams 100 ms batches (3,200 bytes per frame) over WebSocket without `MediaRecorder` container muxing overhead.
 
 2. **Hinglish Stabilization & Local Agreement:**
-   - Powered by `faster-whisper` (`tiny`, `int8`), loaded once at server startup.
-   - Distinct state separation: **Committed (confirmed)** words vs. **Provisional (faint)** hypothesis to eliminate word repetition and UI flicker.
-   - Non-blocking inference: Model execution is dispatched to a background worker thread (`asyncio.to_thread`) to guarantee the FastAPI async event loop never starves.
+   - Powered by `faster-whisper` (`base` `int8` by default locally; `tiny` `int8` on Render's 512 MB free tier), loaded once at server startup.
+   - Distinct state separation: **Committed (confirmed)** words vs. **Provisional (faint)** hypothesis to reduce word repetition and UI flicker.
+   - Non-blocking inference: Model execution is dispatched via `asyncio.to_thread` behind a global concurrency semaphore (`Semaphore(1)`) so the FastAPI async event loop stays responsive.
 
-3. **Persistent History with PostgreSQL CRUD:**
-   - Full CRUD REST API (`GET`, `POST`, `PUT`, `DELETE` at `/api/transcriptions`).
-   - Stores metadata: transcript text, audio duration, code-switch frequency, and latency telemetry.
-   - Full-text search and filtering across saved transcripts.
-   - SQLite zero-configuration local fallback, PostgreSQL in production.
+3. **Persistent History with Session-Scoped CRUD:**
+   - Full CRUD REST API (`GET`, `POST`, `PUT`, `DELETE` at `/api/transcriptions`) with `limit`/`offset` pagination.
+   - Anonymous per-browser `session_id` isolation via `X-Session-ID` header.
+   - SQLite zero-configuration local fallback, PostgreSQL on Render.
 
-4. **Open-Source Text-to-Speech (TTS):**
-   - Built-in neural TTS synthesis using `edge-tts` (supports natural Hindi and Indian English neural voices) with browser Web Speech API fallback.
+4. **Text-to-Speech (TTS):**
+   - Browser-native `window.speechSynthesis` (`hi-IN`) as primary zero-latency playback, with backend `edge-tts` endpoint (`/api/tts`) as fallback when outbound network is available.
 
 5. **Live Telemetry & Metrics HUD:**
-   - Live displays for **Inference Latency (ms)**, **Real-Time Factor (RTF)**, and **Language Switch Points**.
+   - Live displays for **Inference Latency (ms)**, **Stream Real-Time Factor (RTF)**, and **Language Switch Points**.
 
 ---
 
@@ -58,18 +56,23 @@ A production-grade, low-latency multilingual Speech-to-Text (STT) web service ta
 
 ---
 
-## 🔬 Measured Benchmarks (Apple Silicon M4)
+## 🔬 Measured vs. Estimated Benchmarks
 
-Benchmarks executed on local hardware (MacBook Air M4, 16 GB unified RAM):
+### Measured Micro-Benchmarks (Apple Silicon M4, 16 GB RAM)
+Executed via `PYTHONPATH=. python benchmarks/benchmark.py` (7-word agreement over 100,000 iterations, and 60 s of 100 ms PCM16 chunks):
 
-| Benchmark Stage | Measured Time | Notes |
+| Benchmark Stage | Measured Time | Type |
 | :--- | :--- | :--- |
-| **Plain Word Agreement (36 words)** | `0.18 µs` | Zero-overhead exact string matching |
-| **Phonetic Skeleton Agreement (36 words)** | `5.11 µs` | Handles phonetic variance (`kal` vs `kall`) |
-| **Appending 60s of 100ms audio chunks** | `0.17 ms` | Buffer throughput |
-| **Bounded Rolling Buffer (Sliding Window)** | `0.37 ms` | Fixed upper-bound memory usage |
-| **Inference Time (Whisper Tiny int8, CPU)** | `~120 - 180 ms` | Running on 2 CPU threads |
-| **Real-Time Factor (RTF)** | `~0.15 - 0.28` | **Well below 1.0 threshold** (sustainable live streaming) |
+| **Plain Word Agreement** | `0.18 µs / pass` | Measured (`benchmarks/benchmark.py`) |
+| **Phonetic Skeleton Agreement** | `5.11 µs / pass` | Measured (`benchmarks/benchmark.py`) |
+| **Appending 60s of 100ms chunks** | `0.17 ms total` | Measured (`benchmarks/benchmark.py`) |
+| **Bounded Rolling Buffer (60s)** | `0.37 ms total` | Measured (`benchmarks/benchmark.py`) |
+
+### Live Inference (Hardware-Dependent)
+| Environment | Expected Inference Time | Expected Stream RTF | Type |
+| :--- | :--- | :--- | :--- |
+| **Apple M4 CPU (`base-int8`)** | `~150 - 450 ms` | `< 0.4` | Observed in live sessions |
+| **Render Free Tier (`tiny-int8`, ~0.1 vCPU)** | `~1.0 - 3.0 s` | `~0.5 - 1.5` (bursty) | Estimated (shared CPU) |
 
 ---
 
@@ -100,7 +103,7 @@ Benchmarks executed on local hardware (MacBook Air M4, 16 GB unified RAM):
 ├── benchmarks/
 │   └── benchmark.py           # Empirical performance measurement script
 ├── requirements.txt           # Python dependencies
-├── Dockerfile                 # Multi-stage production container
+├── Dockerfile                 # Container image with pre-cached Whisper model
 ├── render.yaml                # Render Blueprint (Web + PostgreSQL)
 ├── .env.example
 ├── .gitignore
@@ -114,8 +117,8 @@ Benchmarks executed on local hardware (MacBook Air M4, 16 GB unified RAM):
 ### 1. Clone & Set Up Virtual Environment
 
 ```bash
-git clone <your-repo-url>
-cd Hinglish
+git clone https://github.com/amankr2615/realtime-stt-dashboard.git
+cd realtime-stt-dashboard
 
 # Create virtual environment (Python 3.11 or 3.12)
 python3 -m venv .venv
@@ -131,7 +134,7 @@ pip install -r requirements.txt
 PYTHONPATH=. pytest -v
 ```
 
-All 7 unit and integration tests will verify audio buffering, agreement logic, and database CRUD.
+The pytest suite verifies audio buffering, local agreement, RTF tracking, reset state, session isolation, pagination, and database CRUD.
 
 ### 3. Run Performance Benchmarks
 

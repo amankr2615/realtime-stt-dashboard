@@ -59,3 +59,50 @@ def test_crud_lifecycle(client):
     # 7. Verify deletion
     verify_resp = client.get(f"/api/transcriptions/{item_id}")
     assert verify_resp.status_code == 404
+
+
+def test_session_isolation(client):
+    headers_a = {"X-Session-ID": "session-alpha"}
+    headers_b = {"X-Session-ID": "session-beta"}
+
+    # Create under session A
+    resp = client.post(
+        "/api/transcriptions",
+        json={"title": "Secret A", "text": "Private note for A"},
+        headers=headers_a,
+    )
+    assert resp.status_code == 201
+    item_id = resp.json()["id"]
+
+    # Session B cannot see it in list, get, update, or delete
+    list_b = client.get("/api/transcriptions", headers=headers_b).json()
+    assert all(item["id"] != item_id for item in list_b)
+    assert client.get(f"/api/transcriptions/{item_id}", headers=headers_b).status_code == 404
+    assert client.put(f"/api/transcriptions/{item_id}", json={"text": "Hacked"}, headers=headers_b).status_code == 404
+    assert client.delete(f"/api/transcriptions/{item_id}", headers=headers_b).status_code == 404
+
+    # Session A can read and delete it
+    assert client.get(f"/api/transcriptions/{item_id}", headers=headers_a).status_code == 200
+    assert client.delete(f"/api/transcriptions/{item_id}", headers=headers_a).status_code == 204
+
+
+def test_pagination(client):
+    headers = {"X-Session-ID": "session-page-test"}
+    created_ids = []
+    for i in range(3):
+        r = client.post(
+            "/api/transcriptions",
+            json={"title": f"Note {i}", "text": f"Text {i}"},
+            headers=headers,
+        )
+        assert r.status_code == 201
+        created_ids.append(r.json()["id"])
+
+    page1 = client.get("/api/transcriptions?limit=2&offset=0", headers=headers).json()
+    page2 = client.get("/api/transcriptions?limit=2&offset=2", headers=headers).json()
+    assert len(page1) == 2
+    assert len(page2) == 1
+
+    # Cleanup
+    for cid in created_ids:
+        client.delete(f"/api/transcriptions/{cid}", headers=headers)

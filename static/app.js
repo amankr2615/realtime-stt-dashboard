@@ -43,6 +43,21 @@ const cancelEditBtn = document.getElementById("cancelEditBtn");
 const saveEditBtn = document.getElementById("saveEditBtn");
 let currentEditingId = null;
 
+// Anonymous per-browser session ownership ID
+function getSessionId() {
+    const key = "hinglish_stt_session_id";
+    let sid = localStorage.getItem(key);
+    if (!sid) {
+        sid = (crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+        localStorage.setItem(key, sid);
+    }
+    return sid;
+}
+
+function apiHeaders(extra = {}) {
+    return { "X-Session-ID": getSessionId(), ...extra };
+}
+
 // -------------------------------------------------------------
 // WebSocket & Audio Capture
 // -------------------------------------------------------------
@@ -228,7 +243,7 @@ async function fetchHistory(query = "") {
         historyList.classList.add("hidden");
 
         const url = query ? `/api/transcriptions?search=${encodeURIComponent(query)}` : "/api/transcriptions";
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: apiHeaders() });
         if (!res.ok) throw new Error("Failed to load records");
         const items = await res.json();
 
@@ -310,7 +325,7 @@ saveTranscriptionBtn.addEventListener("click", async () => {
 
         const res = await fetch("/api/transcriptions", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: apiHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify(payload)
         });
 
@@ -358,7 +373,7 @@ saveEditBtn.addEventListener("click", async () => {
 
         const res = await fetch(`/api/transcriptions/${currentEditingId}`, {
             method: "PUT",
-            headers: { "Content-Type": "application/json" },
+            headers: apiHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ title, text })
         });
 
@@ -378,7 +393,10 @@ window.deleteItem = async function(id) {
     if (!confirm("Are you sure you want to delete this transcription record?")) return;
 
     try {
-        const res = await fetch(`/api/transcriptions/${id}`, { method: "DELETE" });
+        const res = await fetch(`/api/transcriptions/${id}`, {
+            method: "DELETE",
+            headers: apiHeaders()
+        });
         if (!res.ok) throw new Error("Failed to delete record");
         
         // Optimistic DOM removal

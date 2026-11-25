@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.config import settings
 
@@ -38,4 +38,14 @@ def get_db():
 def init_db():
     from backend import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    # Safe additive migration for existing databases lacking session_id
+    inspector = inspect(engine)
+    if "transcriptions" in inspector.get_table_names():
+        cols = {c["name"] for c in inspector.get_columns("transcriptions")}
+        if "session_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE transcriptions ADD COLUMN session_id VARCHAR(64) NOT NULL DEFAULT 'default'")
+                )
+            logger.info("Migrated transcriptions table: added session_id column.")
     logger.info("Database tables initialized.")

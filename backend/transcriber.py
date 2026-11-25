@@ -1,7 +1,7 @@
 import re
 import time
 import logging
-from collections import Counter
+from collections import Counter, deque
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 from faster_whisper import WhisperModel
@@ -117,13 +117,19 @@ class StreamingTranscriber:
     • Collects per‑session latency metrics.
     """
 
-    def __init__(self):
-        self.committed_words:      List[str] = []
+    def __init__(self, max_latency_samples: int = 200):
+        self.max_latency_samples = max_latency_samples
+        self.reset()
+
+    def reset(self) -> None:
+        """Clears all accumulated transcription and telemetry state."""
+        self.committed_words:       List[str] = []
         self.last_hypothesis_words: List[str] = []
         self.session_start          = time.perf_counter()
         self.first_partial_ms:      Optional[float] = None
-        self.inference_latencies:   List[float] = []
-        self.total_audio_sec:       float = 0.0
+        self.inference_latencies:   deque = deque(maxlen=self.max_latency_samples)
+        self.total_inference_sec:   float = 0.0
+        self.total_received_audio_sec: float = 0.0
         self.hallucination_count:   int = 0
 
     def process_hypothesis(
@@ -131,21 +137,29 @@ class StreamingTranscriber:
         hypothesis_text: str,
         audio_duration_sec: float,
         inference_time_sec: float,
+        new_audio_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         now = time.perf_counter()
         if self.first_partial_ms is None and hypothesis_text.strip():
             self.first_partial_ms = (now - self.session_start) * 1000.0
 
         self.inference_latencies.append(inference_time_sec * 1000.0)
-        self.total_audio_sec += audio_duration_sec
-        rtf = inference_time_sec / audio_duration_sec if audio_duration_sec > 0 else 0.0
+        self.total_inference_sec += inference_time_sec
+        added_audio = new_audio_sec if new_audio_sec is not None else audio_duration_sec
+        self.total_received_audio_sec += max(0.0, added_audio)
+
+        window_rtf = inference_time_sec / audio_duration_sec if audio_duration_sec > 0 else 0.0
+        stream_rtf = (
+            self.total_inference_sec / self.total_received_audio_sec
+            if self.total_received_audio_sec > 0 else 0.0
+        )
 
         # ── Hallucination guard ──────────────────────────────────────────────
         if is_hallucination(hypothesis_text):
             self.hallucination_count += 1
             logger.warning("Hallucination #%d suppressed: %.60s…", self.hallucination_count, hypothesis_text)
             # Return current state unchanged — do NOT update committed/provisional
-            return self._make_result([], self.last_hypothesis_words, inference_time_sec, rtf)
+            return self._make_result([], self.last_hypothesis_words, inference_time_sec, stream_rtf, window_rtf)
 
         raw_words    = hypothesis_text.strip().split()
         # Strip words already committed from the new hypothesis
@@ -171,14 +185,15 @@ class StreamingTranscriber:
             provisional = stripped
 
         self.last_hypothesis_words = provisional
-        return self._make_result(newly, provisional, inference_time_sec, rtf)
+        return self._make_result(newly, provisional, inference_time_sec, stream_rtf, window_rtf)
 
     def _make_result(
         self,
         newly_committed: List[str],
         provisional: List[str],
         inference_time_sec: float,
-        rtf: float,
+        stream_rtf: float,
+        window_rtf: float,
     ) -> Dict[str, Any]:
         committed_text   = " ".join(self.committed_words).strip()
         provisional_text = " ".join(provisional).strip()
@@ -193,7 +208,8 @@ class StreamingTranscriber:
             "words_committed_count": len(newly_committed),
             "metrics": {
                 "inference_ms": round(inference_time_sec * 1000, 1),
-                "rtf":          round(rtf, 3),
+                "rtf":          round(stream_rtf, 3),
+                "window_rtf":   round(window_rtf, 3),
                 "p50_ms":       round(p50, 1),
                 "p95_ms":       round(p95, 1),
                 "ttfp_ms":      round(self.first_partial_ms, 1) if self.first_partial_ms else None,
@@ -211,15 +227,20 @@ class StreamingTranscriber:
         final_text = " ".join(self.committed_words).strip()
         p50 = float(np.median(self.inference_latencies)) if self.inference_latencies else 0.0
         p95 = float(np.percentile(self.inference_latencies, 95)) if self.inference_latencies else 0.0
+        stream_rtf = (
+            self.total_inference_sec / self.total_received_audio_sec
+            if self.total_received_audio_sec > 0 else 0.0
+        )
 
         return {
             "final_text": final_text,
             "metrics": {
                 "p50_ms":          round(p50, 1),
                 "p95_ms":          round(p95, 1),
+                "rtf":             round(stream_rtf, 3),
                 "ttfp_ms":         round(self.first_partial_ms, 1) if self.first_partial_ms else None,
                 "switches":        count_language_switches(final_text),
-                "total_audio_sec": round(self.total_audio_sec, 2),
+                "total_audio_sec": round(self.total_received_audio_sec, 2),
                 "hallucinations_suppressed": self.hallucination_count,
             },
         }
@@ -282,7 +303,7 @@ class WhisperEngine:
             language=lang,
             beam_size=1,
             temperature=0.0,
-            initial_prompt=prompt or DEFAULT_HINGLISH_PROMPT,
+            initial_prompt=prompt,
             # Suppress hallucination helpers
             condition_on_previous_text=False,
             no_speech_threshold=0.6,       # skip segments with low speech probability
