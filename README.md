@@ -1,3 +1,12 @@
+---
+title: Hinglish STT Studio
+emoji: 🎙️
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 8000
+---
+
 # Real-Time Hinglish Speech-to-Text Studio & Dashboard
 
 A lightweight, low-latency multilingual Speech-to-Text (STT) web application tailored for **Hinglish (Hindi + English)** code-switched speech. Built with FastAPI, WebSockets, `AudioWorklet`, `faster-whisper`, PostgreSQL/SQLite persistence with session-scoped CRUD, and Text-to-Speech (TTS).
@@ -18,7 +27,7 @@ A lightweight, low-latency multilingual Speech-to-Text (STT) web application tai
 3. **Persistent History with Session-Scoped CRUD:**
    - Full CRUD REST API (`GET`, `POST`, `PUT`, `DELETE` at `/api/transcriptions`) with `limit`/`offset` pagination.
    - Anonymous per-browser `session_id` isolation via `X-Session-ID` header.
-   - SQLite zero-configuration local fallback, PostgreSQL on Render.
+   - SQLite zero-configuration local fallback, PostgreSQL on Render or via `DATABASE_URL` Secret on Hugging Face Spaces. *(Note: On Hugging Face Spaces, local SQLite storage inside the container is ephemeral and may not persist across Space restarts; set `DATABASE_URL` to an external PostgreSQL instance for persistent storage.)*
 
 4. **Text-to-Speech (TTS):**
    - Browser-native `window.speechSynthesis` (`hi-IN`) as primary zero-latency playback, with backend `edge-tts` endpoint (`/api/tts`) as fallback when outbound network is available.
